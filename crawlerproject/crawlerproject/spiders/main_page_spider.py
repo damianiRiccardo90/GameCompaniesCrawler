@@ -1,18 +1,16 @@
 # crawlerproject/spiders/main_page_spider.py
 
 """
-This spider goes through all the game studios main pages available on
-https://gamecompanies.com/industries/
+This spider goes through all the game studios main pages available on wikipedia
+for game studios and indie studios as well.
 
 It creates a file where all of them are listed for further processing.
 """
 
-from scrapy_playwright.http import PlaywrightRequest
-from scrapy import Spider
+from scrapy import Request, Spider
 
 class MainPageSpider(Spider):
     name = 'main_page_spider'
-    allowed_domains = ['mobygames.com']
 
     custom_settings = {
         'DOWNLOAD_DELAY': 2,
@@ -25,13 +23,21 @@ class MainPageSpider(Spider):
             'scrapy.downloadermiddlewares.useragent.UserAgentMiddleware': None,
             'scrapy_fake_useragent.middleware.RandomUserAgentMiddleware': 400,
             'scrapy.downloadermiddlewares.retry.RetryMiddleware': 550,
-            'scrapy_playwright.middleware.PlaywrightMiddleware': 543,
         },
-        'TWISTED_REACTOR': "twisted.internet.asyncioreactor.AsyncioSelectorReactor"
+        'FEEDS': {
+            'companies.csv': {
+                'format': 'csv',
+                'fields': ['website'],
+                'encoding': 'utf8',
+            },
+        },
     }
 
     # Add your target URLs here
-    start_urls = [f'https://www.mobygames.com/company/page:{i}/' for i in range(205)]
+    start_urls = [
+        'https://en.wikipedia.org/wiki/List_of_video_game_developers',
+        'https://en.wikipedia.org/wiki/List_of_indie_game_developers'
+    ]
 
     def start_requests(self):
         headers = {
@@ -45,34 +51,22 @@ class MainPageSpider(Spider):
             'Cache-Control': 'max-age=0',
         }
         for url in self.start_urls:
-            yield PlaywrightRequest(url, self.parse, wait_until='networkidle')
+            self.logger.debug(f"Starting request for URL: {url}")
+            yield Request(url=url, headers=headers, callback=self.parse)
 
     def parse(self, response):
-        # Log the response URL to verify the request was successful
-        self.logger.debug(f'Parsing URL: {response.url}')
+        # Select all rows with the specified background color indicating alive companies
+        for row in response.css('tr[style*="background:#c9daff;"]'):
+            # Extract the link in the first cell of the row
+            link = row.css('td:first-child a::attr(href)').get()
+            if link:
+                full_url = response.urljoin(link)
+                yield Request(full_url, callback=self.parse_company)     
         
-        # Extract company details from the table rows
-        companies = response.css('div.overflow-x-scroll > table > tbody > tr')
-        self.logger.debug(f'Found {len(companies)} companies')
-        
-        for company in companies:
-            url = company.css('td a::attr(href)').get()
-            
-            # Follow the company link to scrape additional details
-            if url:
-                self.logger.debug(f'Following URL: {url}')
-                yield response.follow(url, self.parse_company)
-            else:
-                self.logger.debug('No URL found for a company row')
-
     def parse_company(self, response):
-        try:
-            # Extract the first link under "Related Web Sites"
-            first_related_site = response.css('section#companySites ul.list-group li a::attr(href)').get()
-
-            if first_related_site:
-                # Ensure the file exists before writing
-                with open('output_urls.txt', 'a') as f:
-                    f.write(first_related_site + '\n')
-        except Exception as e:
-            self.logger.error(f"Error parsing company: {e}")
+        self.logger.debug(f"Parsing company URL: {response.url}")
+        # Extract the website URL
+        website = response.css('td.infobox-data span.url a::attr(href)').get()
+        yield {
+            'website': website,
+        }
