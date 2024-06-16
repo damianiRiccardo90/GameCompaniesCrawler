@@ -6,7 +6,8 @@ setup(
     packages=find_packages(),
     package_data={
         'crawlerproject': [
-            'data/game_companies/*.html'
+            'data/game_companies/*.html',
+            'data/gamedevmap/*.html'
         ],
     },
     include_package_data=True,
